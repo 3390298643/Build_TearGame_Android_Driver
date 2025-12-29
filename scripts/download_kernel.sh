@@ -5,8 +5,8 @@
 set -e
 set -o pipefail
 
-# Configuration
-KERNEL_BRANCH="android16-6.12"
+# Configuration - use environment variable or default
+KERNEL_BRANCH="${KERNEL_BRANCH:-android16-6.12}"
 KERNEL_MANIFEST="https://android.googlesource.com/kernel/manifest"
 KERNEL_DIR="${KERNEL_DIR:-kernel-source}"
 
@@ -34,11 +34,17 @@ check_repo() {
         log_error "repo tool is not installed"
         log_info "Installing repo tool..."
         mkdir -p ~/bin
-        curl -s https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+        curl -sL https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
         chmod a+x ~/bin/repo
         export PATH=~/bin:$PATH
         log_info "repo tool installed successfully"
     fi
+    
+    # Verify repo is working
+    repo --version || {
+        log_error "repo tool verification failed"
+        exit 1
+    }
 }
 
 # Configure git for repo
@@ -47,6 +53,9 @@ configure_git() {
     git config --global user.email "github-actions@github.com" || true
     git config --global user.name "GitHub Actions" || true
     git config --global color.ui false || true
+    # Required for newer git versions
+    git config --global init.defaultBranch main || true
+    git config --global protocol.version 2 || true
 }
 
 # Initialize repo
@@ -56,31 +65,60 @@ init_repo() {
     mkdir -p "${KERNEL_DIR}"
     cd "${KERNEL_DIR}"
     
-    repo init -u "${KERNEL_MANIFEST}" -b "${KERNEL_BRANCH}" --depth=1
+    # Use --partial-clone for faster download and add retry logic
+    local max_retries=3
+    local retry_count=0
     
-    if [ $? -ne 0 ]; then
-        log_error "Failed to initialize repo"
-        exit 1
-    fi
+    while [ $retry_count -lt $max_retries ]; do
+        log_info "Attempt $((retry_count + 1)) of ${max_retries}..."
+        
+        if repo init -u "${KERNEL_MANIFEST}" -b "${KERNEL_BRANCH}" --depth=1 --partial-clone; then
+            log_info "Repo initialized successfully"
+            return 0
+        fi
+        
+        retry_count=$((retry_count + 1))
+        if [ $retry_count -lt $max_retries ]; then
+            log_warn "Repo init failed, retrying in 10 seconds..."
+            sleep 10
+        fi
+    done
     
-    log_info "Repo initialized successfully"
+    log_error "Failed to initialize repo after ${max_retries} attempts"
+    exit 1
 }
 
 # Sync kernel source
 sync_source() {
     log_info "Syncing kernel source (this may take a while)..."
     
-    # Use parallel jobs for faster sync
+    # Use parallel jobs for faster sync, but limit to avoid OOM
     JOBS=$(nproc)
-    
-    repo sync -c -j${JOBS} --no-tags --no-clone-bundle --optimized-fetch
-    
-    if [ $? -ne 0 ]; then
-        log_error "Failed to sync kernel source"
-        exit 1
+    if [ "$JOBS" -gt 4 ]; then
+        JOBS=4
     fi
     
-    log_info "Kernel source synced successfully"
+    # Add retry logic for sync
+    local max_retries=3
+    local retry_count=0
+    
+    while [ $retry_count -lt $max_retries ]; do
+        log_info "Sync attempt $((retry_count + 1)) of ${max_retries} with ${JOBS} jobs..."
+        
+        if repo sync -c -j${JOBS} --no-tags --no-clone-bundle --optimized-fetch --fail-fast; then
+            log_info "Kernel source synced successfully"
+            return 0
+        fi
+        
+        retry_count=$((retry_count + 1))
+        if [ $retry_count -lt $max_retries ]; then
+            log_warn "Sync failed, retrying in 30 seconds..."
+            sleep 30
+        fi
+    done
+    
+    log_error "Failed to sync kernel source after ${max_retries} attempts"
+    exit 1
 }
 
 # Verify download

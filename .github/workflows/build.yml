@@ -37,11 +37,14 @@ jobs:
       - name: Free disk space
         run: |
           echo "Freeing up disk space..."
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /opt/hostedtoolcache/CodeQL
-          sudo docker image prune --all --force
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /usr/local/lib/android || true
+          sudo rm -rf /opt/ghc || true
+          sudo rm -rf /opt/hostedtoolcache/CodeQL || true
+          sudo rm -rf /usr/local/share/boost || true
+          sudo rm -rf /usr/share/swift || true
+          sudo docker image prune --all --force || true
+          echo "Disk space after cleanup:"
           df -h
       
       - name: Install dependencies
@@ -65,12 +68,14 @@ jobs:
             unzip \
             lz4 \
             cpio \
-            kmod
+            kmod \
+            rsync \
+            pahole
           
           # Install LLVM/Clang toolchain
           echo "Installing LLVM/Clang..."
-          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
-          sudo add-apt-repository -y "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-17 main"
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
+          echo "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-17 main" | sudo tee /etc/apt/sources.list.d/llvm.list
           sudo apt-get update
           sudo apt-get install -y \
             clang-17 \
@@ -80,15 +85,15 @@ jobs:
             llvm-17-tools
           
           # Create symlinks for LLVM tools
-          sudo ln -sf /usr/bin/clang-17 /usr/bin/clang
-          sudo ln -sf /usr/bin/clang++-17 /usr/bin/clang++
-          sudo ln -sf /usr/bin/ld.lld-17 /usr/bin/ld.lld
-          sudo ln -sf /usr/bin/llvm-ar-17 /usr/bin/llvm-ar
-          sudo ln -sf /usr/bin/llvm-nm-17 /usr/bin/llvm-nm
-          sudo ln -sf /usr/bin/llvm-objcopy-17 /usr/bin/llvm-objcopy
-          sudo ln -sf /usr/bin/llvm-objdump-17 /usr/bin/llvm-objdump
-          sudo ln -sf /usr/bin/llvm-strip-17 /usr/bin/llvm-strip
-          sudo ln -sf /usr/bin/llvm-readelf-17 /usr/bin/llvm-readelf
+          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-17 100
+          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-17 100
+          sudo update-alternatives --install /usr/bin/ld.lld ld.lld /usr/bin/ld.lld-17 100
+          sudo update-alternatives --install /usr/bin/llvm-ar llvm-ar /usr/bin/llvm-ar-17 100
+          sudo update-alternatives --install /usr/bin/llvm-nm llvm-nm /usr/bin/llvm-nm-17 100
+          sudo update-alternatives --install /usr/bin/llvm-objcopy llvm-objcopy /usr/bin/llvm-objcopy-17 100
+          sudo update-alternatives --install /usr/bin/llvm-objdump llvm-objdump /usr/bin/llvm-objdump-17 100
+          sudo update-alternatives --install /usr/bin/llvm-strip llvm-strip /usr/bin/llvm-strip-17 100
+          sudo update-alternatives --install /usr/bin/llvm-readelf llvm-readelf /usr/bin/llvm-readelf-17 100
           
           # Install cross-compile toolchain
           sudo apt-get install -y \
@@ -99,19 +104,25 @@ jobs:
           echo "Verifying installations..."
           clang --version
           aarch64-linux-gnu-gcc --version
+          echo "Dependencies installed successfully"
       
       - name: Install repo tool
         run: |
           echo "Installing repo tool..."
           mkdir -p ~/bin
-          curl -s https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+          curl -sL https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
           chmod a+x ~/bin/repo
           echo "$HOME/bin" >> $GITHUB_PATH
           
-          # Configure git
+          # Configure git for repo
           git config --global user.email "github-actions@github.com"
           git config --global user.name "GitHub Actions"
           git config --global color.ui false
+          git config --global init.defaultBranch main
+          git config --global protocol.version 2
+          
+          # Verify repo installation
+          ~/bin/repo --version
       
       - name: Download kernel source
         if: ${{ github.event.inputs.build_kernel != 'false' }}
@@ -121,6 +132,8 @@ jobs:
           ./scripts/download_kernel.sh
         env:
           KERNEL_DIR: kernel-source
+          KERNEL_BRANCH: ${{ env.KERNEL_BRANCH }}
+        timeout-minutes: 120
       
       - name: Build kernel
         if: ${{ github.event.inputs.build_kernel != 'false' }}
@@ -131,6 +144,7 @@ jobs:
         env:
           KERNEL_DIR: kernel-source
           OUT_DIR: out
+        timeout-minutes: 180
       
       - name: Build Hello World module
         if: ${{ github.event.inputs.build_module != 'false' }}

@@ -1,5 +1,9 @@
 # GKI 6.12 Kernel Build Workflow
 
+
+@TearGame
+@teartalk
+泪心 tearhacker@outlook.com
 [![Build GKI 6.12 Kernel and Module](https://github.com/YOUR_USERNAME/gki-kernel-workflow/actions/workflows/build.yml/badge.svg)](https://github.com/YOUR_USERNAME/gki-kernel-workflow/actions/workflows/build.yml)
 
 自动化构建 Google GKI 6.12-android16 内核和 Hello World 内核模块的 GitHub Actions 工作流。
