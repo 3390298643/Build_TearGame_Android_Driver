@@ -1,254 +1,123 @@
-name: Build GKI 6.12 Kernel and Module
+name: Android Kernel Driver Builder
 
 on:
-  push:
-    branches: [main, master]
-  pull_request:
-    branches: [main, master]
   workflow_dispatch:
     inputs:
-      kernel_branch:
-        description: 'Kernel branch to build'
-        required: false
-        default: 'android16-6.12'
-      build_kernel:
-        description: 'Build kernel (true/false)'
-        required: false
-        default: 'true'
-      build_module:
-        description: 'Build module (true/false)'
-        required: false
-        default: 'true'
-
-env:
-  KERNEL_BRANCH: ${{ github.event.inputs.kernel_branch || 'android16-6.12' }}
+      android_version:
+        description: 'Android Version (Kernel) (e.g., 14)'
+        required: true
+      kernel_version:
+        description: 'Kernel Version (e.g., 6.1)'
+        required: true
+      driver_name:
+        description: 'Driver Module Name (e.g., mydriver.ko)'
+        required: true
+      target_arch:
+        description: 'Target Architecture (aarch64, x86_64, etc.)'
+        required: true
+        default: 'aarch64'
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # 6 hours timeout for kernel build
-    # Only run full build on push to main/master or manual trigger
-    if: github.event_name != 'pull_request'
     
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
-      
-      - name: Free disk space
+        uses: actions/checkout@v4.2.2
+        
+      - name: Prepare kerneldriver directory
         run: |
-          echo "Freeing up disk space..."
-          sudo rm -rf /usr/share/dotnet || true
-          sudo rm -rf /usr/local/lib/android || true
-          sudo rm -rf /opt/ghc || true
-          sudo rm -rf /opt/hostedtoolcache/CodeQL || true
-          sudo rm -rf /usr/local/share/boost || true
-          sudo rm -rf /usr/share/swift || true
-          sudo docker image prune --all --force || true
-          echo "Disk space after cleanup:"
-          df -h
-      
-      - name: Install dependencies
-        run: |
-          echo "Installing build dependencies..."
-          sudo apt-get update
-          sudo apt-get install -y \
-            git \
-            curl \
-            wget \
-            python3 \
-            python3-pip \
-            build-essential \
-            bc \
-            bison \
-            flex \
-            libssl-dev \
-            libelf-dev \
-            libncurses-dev \
-            zip \
-            unzip \
-            lz4 \
-            cpio \
-            kmod \
-            rsync \
-            pahole
+          mkdir kerneldriver
+          mv ./code/*.h ./code/*.c ./code/Makefile kerneldriver/
           
-          # Install LLVM/Clang toolchain
-          echo "Installing LLVM/Clang..."
-          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
-          echo "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-17 main" | sudo tee /etc/apt/sources.list.d/llvm.list
-          sudo apt-get update
-          sudo apt-get install -y \
-            clang-17 \
-            lld-17 \
-            llvm-17 \
-            llvm-17-dev \
-            llvm-17-tools
-          
-          # Create symlinks for LLVM tools
-          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-17 100
-          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-17 100
-          sudo update-alternatives --install /usr/bin/ld.lld ld.lld /usr/bin/ld.lld-17 100
-          sudo update-alternatives --install /usr/bin/llvm-ar llvm-ar /usr/bin/llvm-ar-17 100
-          sudo update-alternatives --install /usr/bin/llvm-nm llvm-nm /usr/bin/llvm-nm-17 100
-          sudo update-alternatives --install /usr/bin/llvm-objcopy llvm-objcopy /usr/bin/llvm-objcopy-17 100
-          sudo update-alternatives --install /usr/bin/llvm-objdump llvm-objdump /usr/bin/llvm-objdump-17 100
-          sudo update-alternatives --install /usr/bin/llvm-strip llvm-strip /usr/bin/llvm-strip-17 100
-          sudo update-alternatives --install /usr/bin/llvm-readelf llvm-readelf /usr/bin/llvm-readelf-17 100
-          
-          # Install cross-compile toolchain
-          sudo apt-get install -y \
-            gcc-aarch64-linux-gnu \
-            binutils-aarch64-linux-gnu
-          
-          # Verify installations
-          echo "Verifying installations..."
-          clang --version
-          aarch64-linux-gnu-gcc --version
-          echo "Dependencies installed successfully"
-      
       - name: Install repo tool
         run: |
-          echo "Installing repo tool..."
-          mkdir -p ~/bin
-          curl -sL https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
-          chmod a+x ~/bin/repo
-          echo "$HOME/bin" >> $GITHUB_PATH
-          
-          # Configure git for repo
-          git config --global user.email "github-actions@github.com"
-          git config --global user.name "GitHub Actions"
-          git config --global color.ui false
-          git config --global init.defaultBranch main
-          git config --global protocol.version 2
-          
-          # Verify repo installation
-          ~/bin/repo --version
-      
-      - name: Download kernel source
-        if: ${{ github.event.inputs.build_kernel != 'false' }}
-        run: |
-          echo "Downloading GKI kernel source..."
-          chmod +x scripts/download_kernel.sh
-          ./scripts/download_kernel.sh
-        env:
-          KERNEL_DIR: kernel-source
-          KERNEL_BRANCH: ${{ env.KERNEL_BRANCH }}
-        timeout-minutes: 120
-      
-      - name: Build kernel
-        if: ${{ github.event.inputs.build_kernel != 'false' }}
-        run: |
-          echo "Building kernel..."
-          chmod +x scripts/build_kernel.sh
-          ./scripts/build_kernel.sh
-        env:
-          KERNEL_DIR: kernel-source
-          OUT_DIR: out
-        timeout-minutes: 180
-      
-      - name: Build Hello World module
-        if: ${{ github.event.inputs.build_module != 'false' }}
-        run: |
-          echo "Building Hello World kernel module..."
-          chmod +x scripts/build_module.sh
-          ./scripts/build_module.sh
-        env:
-          KERNEL_DIR: kernel-source
-          KERNEL_OUT: out
-          MODULE_DIR: hello_module
-          MODULE_OUT: module_out
-      
-      - name: Prepare artifacts
-        run: |
-          echo "Preparing artifacts..."
-          mkdir -p artifacts
-          
-          # Copy kernel image if exists
-          if [ -f "out/arch/arm64/boot/Image" ]; then
-            cp out/arch/arm64/boot/Image artifacts/
-            echo "Kernel Image copied"
-          elif [ -f "out/Image" ]; then
-            cp out/Image artifacts/
-            echo "Kernel Image copied"
-          fi
-          
-          # Copy module if exists
-          if [ -f "module_out/hello.ko" ]; then
-            cp module_out/hello.ko artifacts/
-            echo "hello.ko copied"
-          elif [ -f "hello_module/hello.ko" ]; then
-            cp hello_module/hello.ko artifacts/
-            echo "hello.ko copied"
-          fi
-          
-          # Copy Module.symvers if exists
-          if [ -f "out/Module.symvers" ]; then
-            cp out/Module.symvers artifacts/
-          fi
-          
-          # Create build info
-          echo "Build Information" > artifacts/build_info.txt
-          echo "=================" >> artifacts/build_info.txt
-          echo "Date: $(date)" >> artifacts/build_info.txt
-          echo "Kernel Branch: ${KERNEL_BRANCH}" >> artifacts/build_info.txt
-          echo "Runner: ${{ runner.os }}" >> artifacts/build_info.txt
-          echo "Clang Version: $(clang --version | head -1)" >> artifacts/build_info.txt
-          
-          # List artifacts
-          echo "Artifacts:"
-          ls -la artifacts/
-      
-      - name: Upload kernel artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: gki-kernel-6.12-build
-          path: artifacts/
-          retention-days: 30
-          if-no-files-found: warn
-      
-      - name: Upload module artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: hello-module
-          path: |
-            module_out/hello.ko
-            hello_module/hello.ko
-          retention-days: 30
-          if-no-files-found: warn
+          sudo curl -L https://storage.googleapis.com/git-repo-downloads/repo -o /usr/local/bin/repo
+          sudo chmod a+x /usr/local/bin/repo
 
-  # Quick syntax check job (runs on every push)
-  syntax-check:
-    runs-on: ubuntu-latest
-    
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-      
-      - name: Check shell scripts syntax
+      - name: Set up Android Kernel source
         run: |
-          echo "Checking shell script syntax..."
-          for script in scripts/*.sh; do
-            if [ -f "$script" ]; then
-              echo "Checking $script..."
-              bash -n "$script"
-              echo "✓ $script syntax OK"
-            fi
+          mkdir -p android-kernel && cd android-kernel
+          repo init -u https://android.googlesource.com/kernel/manifest -b common-android${{ github.event.inputs.android_version }}-${{ github.event.inputs.kernel_version }}
+          repo sync -j$(nproc) -c --no-tags --optimized-fetch --force-sync
+
+      - name: Copy kerneldriver
+        run: |
+          cd android-kernel
+          cp -r ../kerneldriver common/drivers
+
+      - name: Modify Makefile
+        run: |
+          cd android-kernel
+          echo "obj-y += kerneldriver/" >> common/drivers/Makefile
+
+      - name: Add module to GKI modules list
+        if: ${{ github.event.inputs.android_version > 13 }}
+        run: |
+          cd android-kernel
+          MODULE_NAME="drivers/kerneldriver/${{ github.event.inputs.driver_name }}"
+          
+          awk -i inplace -v module="$MODULE_NAME" '
+            BEGIN { added=0 }
+            /_COMMON_GKI_MODULES_LIST = \[/ { in_list=1 }
+            in_list && /\]/ {
+              if (!added) {
+                print "    \"" module "\","
+                added=1
+              }
+              in_list=0
+            }
+            in_list && !added {
+              if (module < $0) {
+                print "    \"" module "\","
+                added=1
+              }
+            }
+            { print }
+          ' common/modules.bzl
+          
+      - name: Prepare module list for legacy builds
+        if: ${{ github.event.inputs.android_version <= 13 }}
+        run: |
+          cd android-kernel
+          echo "drivers/kerneldriver/${{ github.event.inputs.driver_name }}" >> common/android/gki_${{ github.event.inputs.target_arch }}_modules
+      - name: Increase stack frame size limit
+        run: |
+          cd android-kernel
+          find . -type f -name "Makefile*" -exec sed -i 's/-Wframe-larger-than=[0-9]*/-Wframe-larger-than=4096/g' {} +
+          grep -q "FRAME_WARN" common/Makefile || echo 'KBUILD_CFLAGS += -Wframe-larger-than=4096' >> common/Makefile
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential flex bison libssl-dev libelf-dev bc python-is-python3
+      - name: Fix missing kprobe symbols for Android 13
+        if: ${{ github.event.inputs.android_version == 13 }}
+        run: |
+          cd android-kernel
+          for symbol in register_kprobe unregister_kprobe; do
+            grep -q "$symbol" common/android/abi_gki_${{ github.event.inputs.target_arch }} || \
+            echo "$symbol" >> common/android/abi_gki_${{ github.event.inputs.target_arch }}
           done
-          echo "All scripts syntax check passed!"
-      
-      - name: Verify module source
+          sed -i '/EXPORT_SYMBOL(unregister_kprobe);/a EXPORT_SYMBOL(register_kprobe);' common/kernel/kprobes.c
+          
+      - name: Build kernel module
         run: |
-          echo "Verifying module source files..."
-          echo "=== hello.c ==="
-          head -30 hello_module/hello.c
-          echo ""
-          echo "=== Makefile ==="
-          cat hello_module/Makefile
-          echo ""
-          echo "Module source verification complete"
+          cd android-kernel
+          if [ ${{ github.event.inputs.android_version }} -le 13 ]; then
+            BUILD_CONFIG=common/build.config.gki.${{ github.event.inputs.target_arch }} LTO=thin build/build.sh -j32
+            OUTPUT_PATH="out/android${{ github.event.inputs.android_version }}-${{ github.event.inputs.kernel_version }}/dist"
+          else
+            echo "Using Bazel build system for Android ${{ github.event.inputs.android_version }}"
+            tools/bazel run //common:kernel_${{ github.event.inputs.target_arch }}_dist
+            OUTPUT_PATH="out/kernel_${{ github.event.inputs.target_arch }}"
+          fi
+          echo "OUTPUT_PATH=$OUTPUT_PATH" >> $GITHUB_ENV
+        continue-on-error: true
       
-      - name: Validate workflow YAML
-        run: |
-          echo "Workflow file structure:"
-          head -50 .github/workflows/build.yml
-          echo "Workflow validation complete"
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: kernel-driver-${{ github.event.inputs.target_arch }}
+          path: |
+            android-kernel/${{ env.OUTPUT_PATH }}
