@@ -22,6 +22,25 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
+      - name: Free up disk space
+        run: |
+          echo "=== Before cleanup ==="
+          df -h
+          # Remove unnecessary pre-installed software
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf /usr/share/swift
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+          # Clean apt cache
+          sudo apt-get clean
+          # Remove docker images
+          docker rmi $(docker image ls -aq) 2>/dev/null || true
+          echo "=== After cleanup ==="
+          df -h
+
       - name: Checkout repository
         uses: actions/checkout@v4.2.2
         
@@ -40,6 +59,11 @@ jobs:
           mkdir -p android-kernel && cd android-kernel
           repo init -u https://android.googlesource.com/kernel/manifest -b common-android${{ github.event.inputs.android_version }}-${{ github.event.inputs.kernel_version }}
           repo sync -j$(nproc) -c --no-tags --optimized-fetch --force-sync
+          # Remove .git directories to save space (not needed for build)
+          find . -name ".git" -type d -exec rm -rf {} + 2>/dev/null || true
+          rm -rf .repo
+          echo "=== After repo sync cleanup ==="
+          df -h
 
       - name: Copy kerneldriver
         run: |
