@@ -1,16 +1,14 @@
-name: Android Kernel Driver BuilderNewest
+name: Android Kernel Tear Builder
 
 on:
   workflow_dispatch:
     inputs:
       android_version:
-        description: 'Android Version (Kernel) (e.g., 16)'
+        description: 'Android Version (Kernel) (e.g., 14)'
         required: true
-        default: '16'
       kernel_version:
-        description: 'Kernel Version (e.g., 6.12)'
+        description: 'Kernel Version (e.g., 6.1)'
         required: true
-        default: '6.12'
       driver_name:
         description: 'Driver Module Name (e.g., mydriver.ko)'
         required: true
@@ -18,14 +16,10 @@ on:
         description: 'Target Architecture (aarch64, x86_64, etc.)'
         required: true
         default: 'aarch64'
-      mirror:
-        description: 'Mirror source (tuna/ustc/google)'
-        required: true
-        default: 'tuna'
 
 jobs:
   build:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     
     steps:
       - name: Checkout repository
@@ -33,108 +27,70 @@ jobs:
         
       - name: Prepare kerneldriver directory
         run: |
-          mkdir -p kerneldriver
-          mv ./code/*.h ./code/*.c ./code/Makefile kerneldriver/ 2>/dev/null || true
+          mkdir kerneldriver
+          mv ./code/*.h ./code/*.c ./code/Makefile kerneldriver/
           
-      - name: Check disk space
-        run: df -h
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential flex bison libssl-dev libelf-dev bc python-is-python3 git-core gnupg curl zlib1g-dev libncurses-dev unzip rsync lz4 pahole
-
       - name: Install repo tool
         run: |
-          if ! command -v repo &> /dev/null; then
-            sudo curl -L https://storage.googleapis.com/git-repo-downloads/repo -o /usr/local/bin/repo
-            sudo chmod a+x /usr/local/bin/repo
-          fi
-          git config --global user.email "builder@github.com"
-          git config --global user.name "Kernel Builder"
-          git config --global color.ui false
-
-      - name: Set mirror URL
-        run: |
-          case "${{ github.event.inputs.mirror }}" in
-            tuna)
-              echo "MANIFEST_URL=https://mirrors.tuna.tsinghua.edu.cn/git/AOSP/kernel/manifest.git" >> $GITHUB_ENV
-              echo "MIRROR_URL=https://mirrors.tuna.tsinghua.edu.cn/git/AOSP" >> $GITHUB_ENV
-              ;;
-            ustc)
-              echo "MANIFEST_URL=https://mirrors.ustc.edu.cn/aosp/kernel/manifest.git" >> $GITHUB_ENV
-              echo "MIRROR_URL=https://mirrors.ustc.edu.cn/aosp" >> $GITHUB_ENV
-              ;;
-            google)
-              echo "MANIFEST_URL=https://android.googlesource.com/kernel/manifest" >> $GITHUB_ENV
-              echo "MIRROR_URL=https://android.googlesource.com" >> $GITHUB_ENV
-              ;;
-          esac
+          sudo curl -L https://storage.googleapis.com/git-repo-downloads/repo -o /usr/local/bin/repo
+          sudo chmod a+x /usr/local/bin/repo
 
       - name: Set up Android Kernel source
-        env:
-          REPO_URL: https://gerrit.googlesource.com/git-repo
         run: |
           mkdir -p android-kernel && cd android-kernel
-          
-          repo init -u ${{ env.MANIFEST_URL }} -b common-android${{ github.event.inputs.android_version }}-${{ github.event.inputs.kernel_version }} --depth=1
-          
-          # 替换 manifest 中的 URL 为镜像
-          if [ "${{ github.event.inputs.mirror }}" != "google" ]; then
-            sed -i "s|https://android.googlesource.com|${{ env.MIRROR_URL }}|g" .repo/manifests/default.xml
-            if [ -f .repo/manifest.xml ]; then
-              sed -i "s|https://android.googlesource.com|${{ env.MIRROR_URL }}|g" .repo/manifest.xml
-            fi
-          fi
-          
-          repo sync -c --no-tags --optimized-fetch --force-sync --no-clone-bundle -j4
+          repo init -u https://android.googlesource.com/kernel/manifest -b common-android${{ github.event.inputs.android_version }}-${{ github.event.inputs.kernel_version }}
+          repo sync -j$(nproc) -c --no-tags --optimized-fetch --force-sync
 
       - name: Copy kerneldriver
         run: |
           cd android-kernel
-          cp -r ../kerneldriver common/drivers/ 2>/dev/null || echo "No kerneldriver to copy"
+          cp -r ../kerneldriver common/drivers
 
       - name: Modify Makefile
         run: |
           cd android-kernel
-          if [ -d common/drivers/kerneldriver ]; then
-            echo "obj-y += kerneldriver/" >> common/drivers/Makefile
-          fi
+          echo "obj-y += kerneldriver/" >> common/drivers/Makefile
 
       - name: Add module to GKI modules list
         if: ${{ github.event.inputs.android_version > 13 }}
         run: |
           cd android-kernel
-          if [ -n "${{ github.event.inputs.driver_name }}" ]; then
-            MODULE_NAME="drivers/kerneldriver/${{ github.event.inputs.driver_name }}"
-            awk -i inplace -v module="$MODULE_NAME" '
-              BEGIN { added=0 }
-              /_COMMON_GKI_MODULES_LIST = \[/ { in_list=1 }
-              in_list && /\]/ {
-                if (!added) {
-                  print "    \"" module "\","
-                  added=1
-                }
-                in_list=0
+          MODULE_NAME="drivers/kerneldriver/${{ github.event.inputs.driver_name }}"
+          
+          awk -i inplace -v module="$MODULE_NAME" '
+            BEGIN { added=0 }
+            /_COMMON_GKI_MODULES_LIST = \[/ { in_list=1 }
+            in_list && /\]/ {
+              if (!added) {
+                print "    \"" module "\","
+                added=1
               }
-              { print }
-            ' common/modules.bzl 2>/dev/null || true
-          fi
+              in_list=0
+            }
+            in_list && !added {
+              if (module < $0) {
+                print "    \"" module "\","
+                added=1
+              }
+            }
+            { print }
+          ' common/modules.bzl
           
       - name: Prepare module list for legacy builds
         if: ${{ github.event.inputs.android_version <= 13 }}
         run: |
           cd android-kernel
-          if [ -n "${{ github.event.inputs.driver_name }}" ]; then
-            echo "drivers/kerneldriver/${{ github.event.inputs.driver_name }}" >> common/android/gki_${{ github.event.inputs.target_arch }}_modules
-          fi
-
+          echo "drivers/kerneldriver/${{ github.event.inputs.driver_name }}" >> common/android/gki_${{ github.event.inputs.target_arch }}_modules
       - name: Increase stack frame size limit
         run: |
           cd android-kernel
           find . -type f -name "Makefile*" -exec sed -i 's/-Wframe-larger-than=[0-9]*/-Wframe-larger-than=4096/g' {} +
-          grep -q "FRAME_WARN" common/Makefile 2>/dev/null || echo 'KBUILD_CFLAGS += -Wframe-larger-than=4096' >> common/Makefile
+          grep -q "FRAME_WARN" common/Makefile || echo 'KBUILD_CFLAGS += -Wframe-larger-than=4096' >> common/Makefile
 
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential flex bison libssl-dev libelf-dev bc python-is-python3
       - name: Fix missing kprobe symbols for Android 13
         if: ${{ github.event.inputs.android_version == 13 }}
         run: |
@@ -148,27 +104,16 @@ jobs:
       - name: Build kernel module
         run: |
           cd android-kernel
-          
-          # 检查资源
-          echo "=== System Resources ==="
-          free -h
-          df -h
-          nproc
-          
           if [ ${{ github.event.inputs.android_version }} -le 13 ]; then
-            BUILD_CONFIG=common/build.config.gki.${{ github.event.inputs.target_arch }} LTO=thin build/build.sh -j$(nproc)
+            BUILD_CONFIG=common/build.config.gki.${{ github.event.inputs.target_arch }} LTO=thin build/build.sh -j32
             OUTPUT_PATH="out/android${{ github.event.inputs.android_version }}-${{ github.event.inputs.kernel_version }}/dist"
           else
             echo "Using Bazel build system for Android ${{ github.event.inputs.android_version }}"
-            # 使用更少的并行任务避免内存不足
-            tools/bazel build --jobs=$(nproc) //common:kernel_${{ github.event.inputs.target_arch }} 2>&1 || {
-              echo "=== Build failed, checking sandbox debug ==="
-              tools/bazel build --sandbox_debug --jobs=4 //common:kernel_${{ github.event.inputs.target_arch }}
-            }
-            tools/bazel run //common:kernel_${{ github.event.inputs.target_arch }}_dist -- --dist_dir=out/dist
-            OUTPUT_PATH="out/dist"
+            tools/bazel run //common:kernel_${{ github.event.inputs.target_arch }}_dist
+            OUTPUT_PATH="out/kernel_${{ github.event.inputs.target_arch }}"
           fi
           echo "OUTPUT_PATH=$OUTPUT_PATH" >> $GITHUB_ENV
+        continue-on-error: true
       
       - name: Upload artifacts
         uses: actions/upload-artifact@v4.6.2
@@ -176,8 +121,3 @@ jobs:
           name: kernel-driver-${{ github.event.inputs.target_arch }}
           path: |
             android-kernel/${{ env.OUTPUT_PATH }}
-
-      - name: Cleanup workspace
-        if: always()
-        run: |
-          rm -rf android-kernel kerneldriver
