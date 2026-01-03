@@ -148,13 +148,25 @@ jobs:
       - name: Build kernel module
         run: |
           cd android-kernel
+          
+          # 检查资源
+          echo "=== System Resources ==="
+          free -h
+          df -h
+          nproc
+          
           if [ ${{ github.event.inputs.android_version }} -le 13 ]; then
             BUILD_CONFIG=common/build.config.gki.${{ github.event.inputs.target_arch }} LTO=thin build/build.sh -j$(nproc)
             OUTPUT_PATH="out/android${{ github.event.inputs.android_version }}-${{ github.event.inputs.kernel_version }}/dist"
           else
             echo "Using Bazel build system for Android ${{ github.event.inputs.android_version }}"
-            tools/bazel run //common:kernel_${{ github.event.inputs.target_arch }}_dist
-            OUTPUT_PATH="out/kernel_${{ github.event.inputs.target_arch }}"
+            # 使用更少的并行任务避免内存不足
+            tools/bazel build --jobs=$(nproc) //common:kernel_${{ github.event.inputs.target_arch }} 2>&1 || {
+              echo "=== Build failed, checking sandbox debug ==="
+              tools/bazel build --sandbox_debug --jobs=4 //common:kernel_${{ github.event.inputs.target_arch }}
+            }
+            tools/bazel run //common:kernel_${{ github.event.inputs.target_arch }}_dist -- --dist_dir=out/dist
+            OUTPUT_PATH="out/dist"
           fi
           echo "OUTPUT_PATH=$OUTPUT_PATH" >> $GITHUB_ENV
       
