@@ -165,7 +165,7 @@ static int init_map_count_offset(void) {
 	return 0;
 }
 
-#if MY_LINUX_VERSION_CODE >= KERNEL_VERSION(6,1,75)
+#if MY_LINUX_VERSION_CODE >= KERNEL_VERSION(6,1,0)
 static int init_vm_file_offset(void) {
 	int is_found_vm_file_offset = 0;
 	struct vm_area_struct *vma;
@@ -192,18 +192,12 @@ static int init_vm_file_offset(void) {
 				size_t addr_val2;
 				unsigned long vm_pgoff;
 				ssize_t accurate_offset = (ssize_t)((size_t)&vma->vm_file - (size_t)vma + g_vm_file_offset);
-				//这里故意屏蔽，因为vm_file已经接近vm_area_struct结构体尾部了
-				/*if (accurate_offset >= sizeof(struct vm_area_struct) - sizeof(struct file *))
-				{
-					mmput(mm);
-					return -EFAULT;
-				}*/
 				rp = (char*)((size_t)vma + (size_t)accurate_offset);
 				addr_val1 = *(size_t*)(rp);
 				rp += (size_t)sizeof(void*);
 				addr_val2 = *(size_t*)(rp);
 				printk_debug(KERN_EMERG "init_vm_file_offset %zd:%zd:%p:%zu\n", g_vm_file_offset, accurate_offset, rp, addr_val1);
-				if (addr_val1 > 0 && addr_val2 > 0 && addr_val1 == addr_val2) //struct list_head anon_vma_chain;里面两个值一样
+				if (addr_val1 > 0 && addr_val2 > 0 && addr_val1 == addr_val2)
 				{
 					int vm_pgoff_offset = 0;
 					int found_vm_pgoff = 0;
@@ -212,7 +206,7 @@ static int init_vm_file_offset(void) {
 					rp += (size_t)sizeof(void*);
 					for (; vm_pgoff_offset < 8 * 5; vm_pgoff_offset += 4) {
 						vm_pgoff = *(unsigned long*)(rp);
-						if (vm_pgoff > 0 && vm_pgoff < 1000/*这个值是vm_pgoff我见过的最大值吧，如果最大值比1000还有大再改大*/) {
+						if (vm_pgoff > 0 && vm_pgoff < 1000) {
 							found_vm_pgoff = 1;
 							break;
 						}
@@ -234,10 +228,7 @@ static int init_vm_file_offset(void) {
 							is_found_vm_file_offset = 1;
 							break;
 						}
-
 					}
-
-
 				}
 			}
 		}
@@ -255,7 +246,7 @@ static int init_vm_file_offset(void) {
 	return 0;
 }
 #else
-
+// 旧内核版本 (< 6.1.0) 使用 mm->mmap 和 vma->vm_next
 static int init_vm_file_offset(void) {
 	int is_found_vm_file_offset = 0;
 	struct vm_area_struct *vma;
@@ -280,27 +271,19 @@ static int init_vm_file_offset(void) {
 			size_t addr_val2;
 			unsigned long vm_pgoff;
 			ssize_t accurate_offset = (ssize_t)((size_t)&vma->vm_file - (size_t)vma + g_vm_file_offset);
-			//这里故意屏蔽，因为vm_file已经接近vm_area_struct结构体尾部了
-			/*if (accurate_offset >= sizeof(struct vm_area_struct) - sizeof(struct file *))
-			{
-				mmput(mm);
-				return -EFAULT;
-			}*/
 			rp = (char*)((size_t)vma + (size_t)accurate_offset);
 			addr_val1 = *(size_t*)(rp);
 			rp += (size_t)sizeof(void*);
 			addr_val2 = *(size_t*)(rp);
 			printk_debug(KERN_EMERG "init_vm_file_offset %zd:%zd:%p:%zu\n", g_vm_file_offset, accurate_offset, rp, addr_val1);
-			if (addr_val1 > 0 && addr_val2 > 0 && addr_val1 == addr_val2) //struct list_head anon_vma_chain;里面两个值一样
-			{
+			if (addr_val1 > 0 && addr_val2 > 0 && addr_val1 == addr_val2) {
 				int vm_pgoff_offset = 0;
 				int found_vm_pgoff = 0;
-
 				printk_debug(KERN_EMERG "init_vm_file_offset addr_val1 == addr_val2 %zd:%zd:%p:%zu\n", g_vm_file_offset, accurate_offset, rp, addr_val1);
 				rp += (size_t)sizeof(void*);
 				for (; vm_pgoff_offset < 8 * 5; vm_pgoff_offset += 4) {
 					vm_pgoff = *(unsigned long*)(rp);
-					if (vm_pgoff > 0 && vm_pgoff < 1000/*这个值是vm_pgoff我见过的最大值吧，如果最大值比1000还有大再改大*/) {
+					if (vm_pgoff > 0 && vm_pgoff < 1000) {
 						found_vm_pgoff = 1;
 						break;
 					}
@@ -309,11 +292,9 @@ static int init_vm_file_offset(void) {
 				if (found_vm_pgoff) {
 					rp += (size_t)sizeof(unsigned long);
 					rp += (size_t)sizeof(struct file *);
-
 					addr_val1 = *(size_t*)(rp);
 					rp += (size_t)sizeof(void*);
 					addr_val2 = *(size_t*)(rp);
-
 					if (addr_val1 == 0 && addr_val2 == 0) {
 						g_vm_file_offset += sizeof(void*) * 2;
 						g_vm_file_offset += vm_pgoff_offset;
@@ -322,10 +303,7 @@ static int init_vm_file_offset(void) {
 						is_found_vm_file_offset = 1;
 						break;
 					}
-
 				}
-
-
 			}
 		}
 	}
@@ -333,7 +311,7 @@ static int init_vm_file_offset(void) {
 	up_read_mmap_lock(mm);
 	mmput(mm);
 
-	if (!is_found_vm_file_offset) {	
+	if (!is_found_vm_file_offset) {
 		printk_debug(KERN_INFO "find vm_file offset failed\n");
 		return -ESPIPE;
 	}

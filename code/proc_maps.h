@@ -2231,7 +2231,8 @@ static int get_proc_maps_list(bool is_kernel_buf, struct pid* proc_pid_struct, c
 }
 #endif
 
-#if MY_LINUX_VERSION_CODE == KERNEL_VERSION(6,1,75)
+// 6.1.x 内核系列 (使用 maple tree 遍历 VMA)
+#if MY_LINUX_VERSION_CODE >= KERNEL_VERSION(6,1,0) && MY_LINUX_VERSION_CODE < KERNEL_VERSION(6,6,0)
 #include <linux/mm_inline.h>
 struct anon_vma_name * __weak anon_vma_name(struct vm_area_struct* vma) {
 	return NULL;
@@ -2346,7 +2347,8 @@ static int get_proc_maps_list(bool is_kernel_buf, struct pid* proc_pid_struct, c
 #endif
 
 
-#if MY_LINUX_VERSION_CODE == KERNEL_VERSION(6,6,30)
+// 6.6.x 及更高版本内核
+#if MY_LINUX_VERSION_CODE >= KERNEL_VERSION(6,6,0)
 #include <linux/mm_inline.h>
 struct anon_vma_name * __weak anon_vma_name(struct vm_area_struct* vma) {
 	return NULL;

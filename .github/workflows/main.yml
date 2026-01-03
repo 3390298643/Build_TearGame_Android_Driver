@@ -138,10 +138,30 @@ jobs:
           fi
           echo "OUTPUT_PATH=$OUTPUT_PATH" >> $GITHUB_ENV
         continue-on-error: true
+
+      - name: Collect build artifacts
+        run: |
+          mkdir -p artifacts
+          cd android-kernel/${{ env.OUTPUT_PATH }}
+          # 只复制驱动模块文件
+          if [ -f "${{ github.event.inputs.driver_name }}" ]; then
+            cp -v "${{ github.event.inputs.driver_name }}" ../../../artifacts/
+          fi
+          # 复制其他 .ko 文件（排除大型内核模块）
+          for ko in *.ko; do
+            if [ -f "$ko" ]; then
+              size=$(stat -c%s "$ko" 2>/dev/null || echo 0)
+              # 只复制小于 50MB 的 .ko 文件
+              if [ "$size" -lt 52428800 ]; then
+                cp -v "$ko" ../../../artifacts/ 2>/dev/null || true
+              fi
+            fi
+          done
+          echo "=== Artifacts to upload ==="
+          ls -lh ../../../artifacts/
       
       - name: Upload artifacts
         uses: actions/upload-artifact@v4.6.2
         with:
           name: kernel-driver-${{ github.event.inputs.target_arch }}
-          path: |
-            android-kernel/${{ env.OUTPUT_PATH }}
+          path: artifacts/
